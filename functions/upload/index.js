@@ -154,7 +154,7 @@ async function processFileUpload(context, formdata = null) {
     // 处理文件夹路径格式，确保没有开头的/
     const normalizedFolder = uploadFolder
         ? uploadFolder.replace(/^\/+/, '') // 移除开头的/
-            .replace(/\/{2,}/g, '/') // 替换多个连续的/为单个/
+            .替换(/\/{2,}/g, '/') // 替换多个连续的/为单个/
             .replace(/\/$/, '') // 移除末尾的/
         : '';
 
@@ -167,7 +167,7 @@ async function processFileUpload(context, formdata = null) {
         UploadAddress: ipAddress,
         ListType: "None",
         TimeStamp: time,
-        Label: "None",
+        标签: "None",
         Directory: normalizedFolder === '' ? '' : normalizedFolder + '/',
         Tags: []
     };
@@ -175,7 +175,7 @@ async function processFileUpload(context, formdata = null) {
     // 添加图片尺寸信息
     if (imageDimensions) {
         metadata.Width = imageDimensions.width;
-        metadata。Height = imageDimensions.height;
+        metadata.Height = imageDimensions.height;
     }
 
     let fileExt = fileName.split('.').pop(); // 文件扩展名
