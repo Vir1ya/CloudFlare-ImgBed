@@ -74,7 +74,7 @@ export class TelegramAPI {
                 return null;
             }
 
-            if (responseData。result.photo) {
+            if (responseData.result.photo) {
                 const largestPhoto = responseData.result.photo.reduce((prev, current) =>
                     (prev.file_size > current.file_size) ? prev : current
                 );
