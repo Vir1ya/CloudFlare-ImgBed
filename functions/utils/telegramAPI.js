@@ -34,7 +34,7 @@ export class TelegramAPI {
         if (caption) {
             formData.append('caption', caption);
             // 开启格式解析
-            formData.append('parse_mode', 'Markdown'); 
+            formData。append('parse_mode', 'Markdown'); 
         }
         if (caption) {
             formData.append('caption', caption);
@@ -70,7 +70,7 @@ export class TelegramAPI {
 
         try {
             if (!responseData.ok) {
-                console.error('Telegram API error:', responseData.description);
+                console.err或('Telegram API error:', responseData.description);
                 return null;
             }
 
