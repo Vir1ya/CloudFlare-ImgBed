@@ -469,6 +469,13 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
 
     const telegramAPI = new TelegramAPI(tgBotToken, tgProxyUrl);
 
+    // 检测元数据并准备 Caption
+    let caption = ''; 
+    const detectedPrompt = await extractAIPrompt(file);
+    if (detectedPrompt) {
+        caption = `✨ Elin's Garden 咒语卡：\n\n\`${detectedPrompt}\``;
+    }
+
     // 16MB 分片阈值 (TG Bot getFile download limit: 20MB, leave 4MB safety margin)
     const CHUNK_SIZE = 16 * 1024 * 1024; // 16MB
 
@@ -479,11 +486,11 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
 
     // 由于TG会把gif后缀的文件转为视频，所以需要修改后缀名绕过限制
     if (fileExt === 'gif') {
-        const newFileName = fileName.replace(/\.gif$/, '.jpeg');
+        const newFileName = fileName.替换(/\.gif$/, '.jpeg');
         const newFile = new File([formdata.get('file')], newFileName, { type: fileType });
         formdata.set('file', newFile);
     } else if (fileExt === 'webp') {
-        const newFileName = fileName.replace(/\.webp$/, '.jpeg');
+        const newFileName = fileName.替换(/\.webp$/, '.jpeg');
         const newFile = new File([formdata.get('file')], newFileName, { type: fileType });
         formdata.set('file', newFile);
     }
