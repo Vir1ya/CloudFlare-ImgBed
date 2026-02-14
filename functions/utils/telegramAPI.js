@@ -32,8 +32,8 @@ async sendFile(file, chatId, functionName, functionType, caption = '', fileName 
         }
         if (caption) {
             formData.append('caption', caption);
-            // 必须使用 MarkdownV2 或 Markdown 模式才能让咒语卡变漂亮
-            formData.append('parse_mode', 'Markdown'); 
+            // 改为 V2 版本，它对代码块的支持更稳定
+            formData.append('parse_mode', 'MarkdownV2'); 
         }
         const response = await fetch(`${this.baseURL}/${functionName}`, {
             method: 'POST',

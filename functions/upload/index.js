@@ -894,7 +894,6 @@ async function tryRetry(err, context, uploadChannel, fullId, metadata, fileExt, 
 
     return createResponse(JSON.stringify(errMessages), { status: 500 });
 }
-//读取图片元数据，并提取提示词。
 async function extractAIPrompt(file) {
     if (file.type !== 'image/png') return null;
     try {
@@ -924,8 +923,9 @@ async function extractAIPrompt(file) {
                 } else if (key === 'Comment') {
                     try {
                         const json = JSON.parse(value);
-                        info.uc = json.uc || '';
-                        info.model = json.model || '';
+                        // 兼容多种可能的 JSON 键名
+                        info.uc = json.uc || json.negative_prompt || '';
+                        info.model = json.model || json.model_hash || 'NovelAI';
                         info.steps = json.steps || '';
                         info.seed = json.seed || '';
                         if (json.prompt) info.prompt = json.prompt;
@@ -942,15 +942,13 @@ async function extractAIPrompt(file) {
         }
 
         if (found) {
-            // 🌸 可爱且方便复制的排版
-            let res = `🌸 **Elin's Garden 咒语卡** 🌸\n\n`;
-            res += `✨ **Prompt**\n\`${info.prompt}\`\n\n`;
-            if (info.uc) res += `❌ **Negative**\n\`${info.uc}\`\n\n`;
-            if (info.model) res += `🎨 **Model**: ${info.model}\n`;
-            if (info.steps || info.seed) {
-                res += `🔢 **Steps**: ${info.steps}  🎲 **Seed**: ${info.seed}`;
-            }
-            return res.substring(0, 1024); 
+            // 使用 MarkdownV2 的等宽代码块语法，确保一键复制
+            let res = "💕🌸 *Elin\\'s 咒语卡* 🌸💕\n\n";
+            res += "✨ *Prompt*\n```\n" + info.prompt + "\n```\n\n";
+            if (info.uc) res += "❌ *Negative*\n```\n" + info.uc + "\n```\n\n";
+            res += "🎨 *Model*: " + (info.model || "Unknown") + "\n";
+            res += "🔢 *Steps*: " + (info.steps || "N/A") + "  🎲 *Seed*: " + (info.seed || "N/A");
+            return res.substring(0, 1024);
         }
     } catch (e) { return null; }
     return null;
