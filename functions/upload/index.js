@@ -175,7 +175,7 @@ async function processFileUpload(context, formdata = null) {
     // 添加图片尺寸信息
     if (imageDimensions) {
         metadata.Width = imageDimensions.width;
-        metadata.Height = imageDimensions.height;
+        metadata。Height = imageDimensions.height;
     }
 
     let fileExt = fileName.split('.').pop(); // 文件扩展名
@@ -401,7 +401,7 @@ async function uploadFileToS3(context, fullId, metadata, returnLink) {
         // 保存 CDN 文件完整路径（如果配置了 CDN 域名）
         if (cdnDomain) {
             // 存储完整的 CDN 文件路径，而不是仅存储域名
-            metadata.S3CdnFileUrl = `${cdnDomain.replace(/\/$/, '')}/${s3FileName}`;
+            metadata.S3CdnFileUrl = `${cdnDomain.替换(/\/$/, '')}/${s3FileName}`;
         }
 
         // 图像审查
@@ -469,8 +469,8 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
 
     const telegramAPI = new TelegramAPI(tgBotToken, tgProxyUrl);
 
-    // 检测元数据并准备 Caption
-    let caption = ''; 
+// 🌸 园丁的读心术：检测咒语
+    let caption = '';
     const detectedPrompt = await extractAIPrompt(file);
     if (detectedPrompt) {
         caption = `✨ Elin's Garden 咒语卡：\n\n\`${detectedPrompt}\``;
@@ -893,35 +893,36 @@ async function tryRetry(err, context, uploadChannel, fullId, metadata, fileExt, 
 
     return createResponse(JSON.stringify(errMessages), { status: 500 });
 }
-// 专门提取 NovelAI 提示词的解析函数
+// 更加健壮的 AI 咒语解析逻辑
 async function extractAIPrompt(file) {
     if (file.type !== 'image/png') return null;
-
     try {
-        const buffer = await file.arrayBuffer();
-        const uint8 = new Uint8Array(buffer);
+        // 只切前 256KB，避免内存崩溃
+        const header = await file.slice(0, 262144).arrayBuffer();
+        const uint8 = new Uint8Array(header);
+        const view = new DataView(header);
         const decoder = new TextDecoder();
         
         let offset = 8; // 跳过 PNG 文件头
-        while (offset < uint8.length) {
-            const length = (uint8[offset] << 24) | (uint8[offset + 1] << 16) | (uint8[offset + 2] << 8) | uint8[offset + 3];
+        while (offset < uint8.length - 8) {
+            const length = view.getUint32(offset); // 使用 DataView 处理大端序
             const type = decoder.decode(uint8.slice(offset + 4, offset + 8));
             
-            if (输入 === 'tEXt' || type === 'iTXt') {
+            if (type === 'tEXt' || type === 'iTXt') {
                 const data = uint8.slice(offset + 8, offset + 8 + length);
                 const textData = decoder.decode(data);
                 
-                if (textData.includes('Description') || textData.includes('Comment')) {
+                // 只要包含这些关键字，就判定为我们要找的元数据
+                if (textData.includes('masterpiece') || textData.includes('rating:')) {
                     const parts = textData.split('\0');
-                    const prompt = parts.find(p => p.includes('masterpiece') || p.includes('rating:')); 
-                    if (prompt) return prompt;
+                    // 拿取最后一部分内容，并截断至 TG 允许的 1000 字符内
+                    return parts[parts.length - 1].trim().substring(0, 1000);
                 }
             }
-            offset += 12 + length;
-            if (offset > 100000) break; // 仅扫描前 100KB
+            offset += 12 + length; // 移动到下个 Chunk
         }
     } catch (e) {
-        return null;
+        console.log('解析出错:', e.message);
     }
     return null;
 }
