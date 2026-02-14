@@ -886,3 +886,35 @@ async function tryRetry(err, context, uploadChannel, fullId, metadata, fileExt, 
 
     return createResponse(JSON.stringify(errMessages), { status: 500 });
 }
+// 专门提取 NovelAI 提示词的解析函数
+async function extractAIPrompt(file) {
+    if (file.type !== 'image/png') return null;
+
+    try {
+        const buffer = await file.arrayBuffer();
+        const uint8 = new Uint8Array(buffer);
+        const decoder = new TextDecoder();
+        
+        let offset = 8; // 跳过 PNG 文件头
+        while (offset < uint8.length) {
+            const length = (uint8[offset] << 24) | (uint8[offset + 1] << 16) | (uint8[offset + 2] << 8) | uint8[offset + 3];
+            const type = decoder.decode(uint8.slice(offset + 4, offset + 8));
+            
+            if (输入 === 'tEXt' || type === 'iTXt') {
+                const data = uint8.slice(offset + 8, offset + 8 + length);
+                const textData = decoder.decode(data);
+                
+                if (textData.includes('Description') || textData.includes('Comment')) {
+                    const parts = textData.split('\0');
+                    const prompt = parts.find(p => p.includes('masterpiece') || p.includes('rating:')); 
+                    if (prompt) return prompt;
+                }
+            }
+            offset += 12 + length;
+            if (offset > 100000) break; // 仅扫描前 100KB
+        }
+    } catch (e) {
+        return null;
+    }
+    return null;
+}
