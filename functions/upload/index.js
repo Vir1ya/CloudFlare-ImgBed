@@ -910,12 +910,13 @@ async function extractAIPrompt(file) {
         while (offset < uint8.length - 8) {
             const length = view.getUint32(offset);
             const type = decoder.decode(uint8.slice(offset + 4, offset + 8));
-            if (输入 === 'tEXt' || type === 'iTXt') {
+            
+            if (type === 'tEXt' || type === 'iTXt') {
                 const data = uint8.slice(offset + 8, offset + 8 + length);
                 const textData = decoder.decode(data);
                 const parts = textData.split('\0');
                 const key = parts[0];
-                const value = parts[1] || '';
+                const value = parts[parts.length - 1] || '';
 
                 if (key === 'Description') {
                     info.prompt = value;
@@ -930,7 +931,10 @@ async function extractAIPrompt(file) {
                         if (json.prompt) info.prompt = json.prompt;
                         found = true;
                     } catch (e) {
-                        if (value.includes('masterpiece')) info.prompt = value;
+                        if (value.includes('masterpiece')) {
+                            info.prompt = value;
+                            found = true;
+                        }
                     }
                 }
             }
@@ -938,7 +942,7 @@ async function extractAIPrompt(file) {
         }
 
         if (found) {
-            // 🌸 重点：使用反引号包围提示词，实现一键复制且不干扰
+            // 🌸 可爱且方便复制的排版
             let res = `🌸 **Elin's Garden 咒语卡** 🌸\n\n`;
             res += `✨ **Prompt**\n\`${info.prompt}\`\n\n`;
             if (info.uc) res += `❌ **Negative**\n\`${info.uc}\`\n\n`;

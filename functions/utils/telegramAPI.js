@@ -22,9 +22,8 @@ export class TelegramAPI {
      * @param {string} functionType - 文件类型参数名（如：photo, document等）
      * @returns {Promise<Object>} API响应结果
      */
-    async sendFile(file, chatId, functionName, functionType, caption = '', fileName = '') {
+async sendFile(file, chatId, functionName, functionType, caption = '', fileName = '') {
         const formData = new FormData();
-
         formData.append('chat_id', chatId);
         if (fileName) {
             formData.append(functionType, file, fileName);
@@ -33,13 +32,9 @@ export class TelegramAPI {
         }
         if (caption) {
             formData.append('caption', caption);
-            // 开启格式解析
+            // 必须使用 MarkdownV2 或 Markdown 模式才能让咒语卡变漂亮
             formData.append('parse_mode', 'Markdown'); 
         }
-        if (caption) {
-            formData.append('caption', caption);
-        }
-
         const response = await fetch(`${this.baseURL}/${functionName}`, {
             method: 'POST',
             headers: this.defaultHeaders,
@@ -47,7 +42,7 @@ export class TelegramAPI {
         });
         console.log('Telegram API response:', response.status, response.statusText);
         if (!response.ok) {
-            throw new 错误(`Telegram API error: ${response.statusText}`);
+            throw new Error(`Telegram API error: ${response.statusText}`);
         }
 
         // 解析响应数据
