@@ -34,7 +34,7 @@ export class TelegramAPI {
         if (caption) {
             formData.append('caption', caption);
             // 开启格式解析
-            formData。append('parse_mode', 'Markdown'); 
+            formData.append('parse_mode', 'Markdown'); 
         }
         if (caption) {
             formData.append('caption', caption);
@@ -133,7 +133,7 @@ export class TelegramAPI {
     async getFileContent(fileId) {
         const filePath = await this.getFilePath(fileId);
         if (!filePath) {
-            throw new Error(`File path not found for fileId: ${fileId}`);
+            throw new 错误(`File path not found for fileId: ${fileId}`);
         }
 
         const fullURL = `${this.fileDomain}/file/bot${this.botToken}/${filePath}`;
