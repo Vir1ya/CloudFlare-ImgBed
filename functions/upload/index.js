@@ -524,7 +524,7 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
     // 上传文件到 Telegram
     let res = createResponse('upload error, check your environment params about telegram channel!', { status: 400 });
     try {
-        const response = await telegramAPI.sendFile(formdata.get('file'), tgChatId, sendFunction.url, sendFunction.type);
+        const response = await telegramAPI.sendFile(formdata.get('file'), tgChatId, sendFunction.url, sendFunction.type, caption);
         const fileInfo = telegramAPI.getFileInfo(response);
         const filePath = await telegramAPI.getFilePath(fileInfo.file_id);
         const id = fileInfo.file_id;
