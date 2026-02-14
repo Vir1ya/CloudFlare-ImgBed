@@ -923,7 +923,6 @@ async function extractAIPrompt(file) {
                 } else if (key === 'Comment') {
                     try {
                         const json = JSON.parse(value);
-                        // 兼容多种可能的 JSON 键名
                         info.uc = json.uc || json.negative_prompt || '';
                         info.model = json.model || json.model_hash || 'NovelAI';
                         info.steps = json.steps || '';
@@ -942,13 +941,66 @@ async function extractAIPrompt(file) {
         }
 
         if (found) {
-            // 使用 MarkdownV2 的等宽代码块语法，确保一键复制
-            let res = "💕🌸 *Elin\\'s 咒语卡* 🌸💕\n\n";
-            res += "✨ *Prompt*\n```\n" + info.prompt + "\n```\n\n";
-            if (info.uc) res += "❌ *Negative*\n```\n" + info.uc + "\n```\n\n";
-            res += "🎨 *Model*: " + (info.model || "Unknown") + "\n";
-            res += "🔢 *Steps*: " + (info.steps || "N/A") + "  🎲 *Seed*: " + (info.seed || "N/A");
-            return res.substring(0, 1024);
+            // --- 修复开始 ---
+            
+            // 1. 定义 MarkdownV2 转义函数 (用于代码块之外的文本)
+            // 需要转义的字符: _ * [ ] ( ) ~ > # + - = | { } . !
+            const escapeMd = (text) => {
+                if (!text) return 'N/A';
+                return text.toString().replace(/[_*[\]()~>#\+\-=|{}.!]/g, '\\$&');
+            };
+
+            // 2. 准备头部和尾部 (元数据)
+            // 注意: Model, Steps, Seed 可能包含特殊字符，必须转义
+            const headerStr = "💕🌸 *Elin\\'s 咒语卡* 🌸💕\n\n"; 
+            const modelStr = escapeMd(info.model || "Unknown");
+            const stepsStr = escapeMd(info.steps || "N/A");
+            const seedStr = escapeMd(info.seed || "N/A");
+            
+            const footerStr = `🎨 *Model*: ${modelStr}\n🔢 *Steps*: ${stepsStr}  🎲 *Seed*: ${seedStr}`;
+
+            // 3. 智能计算剩余长度，防止截断导致 Markdown 破损
+            const MAX_TG_LENGTH = 1024;
+            // 估算固定字符长度 (标题 + 两个代码块标记的开销)
+            // "✨ *Prompt*\n```\n" + ... + "\n```\n\n"  约为 18 字符
+            // "❌ *Negative*\n```\n" + ... + "\n```\n\n" 约为 21 字符
+            const structureCost = headerStr.length + footerStr.length + 50; 
+            
+            let availableChars = MAX_TG_LENGTH - structureCost;
+            if (availableChars < 100) availableChars = 100; // 兜底
+
+            let prompt = info.prompt || '';
+            let uc = info.uc || '';
+
+            // 简单的空间分配策略：
+            // 如果总长度超标，优先截断内容，而不是截断整个消息字符串
+            const totalContentLen = prompt.length + uc.length;
+            
+            if (totalContentLen > availableChars) {
+                // 如果太长，给 Prompt 分配 60%，UC 分配 40% (或者根据实际情况调整)
+                const promptQuota = Math.floor(availableChars * 0.6);
+                const ucQuota = availableChars - promptQuota;
+
+                if (prompt.length > promptQuota) {
+                    prompt = prompt.substring(0, promptQuota) + "...";
+                }
+                // 重新计算剩余给 UC
+                const remainingForUc = availableChars - prompt.length;
+                if (uc.length > remainingForUc) {
+                    uc = uc.substring(0, remainingForUc) + "...";
+                }
+            }
+
+            // 4. 拼接最终字符串
+            let res = headerStr;
+            res += "✨ *Prompt*\n```\n" + prompt + "\n```\n\n";
+            if (uc) {
+                res += "❌ *Negative*\n```\n" + uc + "\n```\n\n";
+            }
+            res += footerStr;
+
+            return res;
+            // --- 修复结束 ---
         }
     } catch (e) { return null; }
     return null;
