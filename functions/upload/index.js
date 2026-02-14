@@ -471,12 +471,14 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
 
 // 检测全量元数据
     let caption = '';
-    const detectedPrompt = await extractAIPrompt(file);
-    if (detectedPrompt) {
-        // 直接使用解析函数拼好的格式
-        caption = detectedPrompt; 
+    let aiData = null; // 用于存储提取到的 AI 数据
+    
+    // 注意：这里我们获取的是一个对象了
+    aiData = await extractAIPrompt(file);
+    if (aiData) {
+        caption = aiData.caption; // 图片使用预览版 Caption
     }
-
+    
     // 16MB 分片阈值 (TG Bot getFile download limit: 20MB, leave 4MB safety margin)
     const CHUNK_SIZE = 16 * 1024 * 1024; // 16MB
 
@@ -522,57 +524,72 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
         sendFunction = { 'url': 'sendDocument', 'type': 'document' };
     }
 
-    // 上传文件到 Telegram
+// 上传文件到 Telegram
     let res = createResponse('upload error, check your environment params about telegram channel!', { status: 400 });
     try {
+        // 1. 发送图片 (使用预览版 Caption)
         const response = await telegramAPI.sendFile(formdata.get('file'), tgChatId, sendFunction.url, sendFunction.type, caption);
+        
+        // 检查 Telegram 响应是否成功
+        if (!response.ok) {
+            throw new Error(`Telegram API error: ${response.description}`);
+        }
+
+        // --- [新增逻辑]：补发完整提示词消息 ---
+        if (aiData && aiData.needsSecondMessage) {
+            try {
+                // 回复刚才发送成功的那张图
+                const messageId = response.result ? response.result.message_id : null;
+                await telegramAPI.sendMessage(tgChatId, aiData.fullText, messageId);
+            } catch (msgError) {
+                console.error('Failed to send extra prompt message:', msgError);
+            }
+        }
+        // ------------------------------------
+
+        // --- [核心修复]：必须保留以下三行，否则后面会报错 ---
         const fileInfo = telegramAPI.getFileInfo(response);
         const filePath = await telegramAPI.getFilePath(fileInfo.file_id);
         const id = fileInfo.file_id;
-        // 更新FileSize
+        // ------------------------------------------------
+
+        // 更新 FileSize
         metadata.FileSize = (fileInfo.file_size / 1024 / 1024).toFixed(2);
 
-        // 将响应返回给客户端
+        // 构建返回给图床前端的成功响应
         res = createResponse(
             JSON.stringify([{ 'src': `${returnLink}` }]),
             {
                 status: 200,
-                headers: {
-                    'Content-Type': 'application/json',
-                }
+                headers: { 'Content-Type': 'application/json' }
             }
         );
 
-
-        // 图像审查（使用代理域名或官方域名）
+        // 图像审查
         const moderateDomain = tgProxyUrl ? `https://${tgProxyUrl}` : 'https://api.telegram.org';
         const moderateUrl = `${moderateDomain}/file/bot${tgBotToken}/${filePath}`;
         metadata.Label = await moderateContent(env, moderateUrl);
 
-        // 更新metadata，写入KV数据库
+        // 更新 metadata，写入数据库
         try {
             metadata.Channel = "TelegramNew";
             metadata.ChannelName = tgChannel.name;
-
             metadata.TgFileId = id;
             metadata.TgChatId = tgChatId;
             metadata.TgBotToken = tgBotToken;
-            // 保存代理域名配置
             if (tgProxyUrl) {
                 metadata.TgProxyUrl = tgProxyUrl;
             }
-            await db.put(fullId, "", {
-                metadata: metadata,
-            });
+            await db.put(fullId, "", { metadata: metadata });
         } catch (error) {
             res = createResponse('Error: Failed to write to KV database', { status: 500 });
         }
 
-        // 结束上传
+        // 结束上传流程 (清除缓存等)
         waitUntil(endUpload(context, fullId, metadata));
 
     } catch (error) {
-        console.log('Telegram upload error:', error.message);
+        console.error('Telegram upload error:', error.message);
         res = createResponse('upload error, check your environment params about telegram channel!', { status: 400 });
     } finally {
         return res;
@@ -941,66 +958,74 @@ async function extractAIPrompt(file) {
         }
 
         if (found) {
-            // --- 修复开始 ---
-            
-            // 1. 定义 MarkdownV2 转义函数 (用于代码块之外的文本)
-            // 需要转义的字符: _ * [ ] ( ) ~ > # + - = | { } . !
+            // 转义函数
             const escapeMd = (text) => {
                 if (!text) return 'N/A';
                 return text.toString().replace(/[_*[\]()~>#\+\-=|{}.!]/g, '\\$&');
             };
 
-            // 2. 准备头部和尾部 (元数据)
-            // 注意: Model, Steps, Seed 可能包含特殊字符，必须转义
             const headerStr = "💕🌸 *Elin\\'s 咒语卡* 🌸💕\n\n"; 
             const modelStr = escapeMd(info.model || "Unknown");
             const stepsStr = escapeMd(info.steps || "N/A");
             const seedStr = escapeMd(info.seed || "N/A");
-            
             const footerStr = `🎨 *Model*: ${modelStr}\n🔢 *Steps*: ${stepsStr}  🎲 *Seed*: ${seedStr}`;
 
-            // 3. 智能计算剩余长度，防止截断导致 Markdown 破损
-            const MAX_TG_LENGTH = 1024;
-            // 估算固定字符长度 (标题 + 两个代码块标记的开销)
-            // "✨ *Prompt*\n```\n" + ... + "\n```\n\n"  约为 18 字符
-            // "❌ *Negative*\n```\n" + ... + "\n```\n\n" 约为 21 字符
-            const structureCost = headerStr.length + footerStr.length + 50; 
+            const rawPrompt = info.prompt || '';
+            const rawUc = info.uc || '';
+
+            // --- 1. 生成完整版文本 (用于第二条消息) ---
+            // 文本消息限制 4096，稍微留点余量
+            // 如果连纯文本都超了，那只能截断了，但这种情况极少
+            let fullText = headerStr;
+            fullText += "✨ *Full Prompt*\n```\n" + rawPrompt.substring(0, 2500) + "\n```\n\n";
+            if (rawUc) {
+                fullText += "❌ *Negative*\n```\n" + rawUc.substring(0, 1000) + "\n```\n\n";
+            }
+            fullText += footerStr;
+
+
+            // --- 2. 生成预览版 Caption (用于图片下方) ---
+            // 逻辑：尽量展示，超长截断，死保正面提示词
+            const MAX_CAPTION = 1024;
+            const structureCost = headerStr.length + footerStr.length + 50;
+            let availableChars = MAX_CAPTION - structureCost;
+            if (availableChars < 100) availableChars = 100;
+
+            let previewPrompt = rawPrompt;
+            let previewUc = rawUc;
+            let isTruncated = false;
+
+            const totalLen = previewPrompt.length + previewUc.length;
             
-            let availableChars = MAX_TG_LENGTH - structureCost;
-            if (availableChars < 100) availableChars = 100; // 兜底
-
-            let prompt = info.prompt || '';
-            let uc = info.uc || '';
-
-            // 简单的空间分配策略：
-            // 如果总长度超标，优先截断内容，而不是截断整个消息字符串
-            const totalContentLen = prompt.length + uc.length;
-            
-            if (totalContentLen > availableChars) {
-                // 如果太长，给 Prompt 分配 60%，UC 分配 40% (或者根据实际情况调整)
-                const promptQuota = Math.floor(availableChars * 0.6);
-                const ucQuota = availableChars - promptQuota;
-
-                if (prompt.length > promptQuota) {
-                    prompt = prompt.substring(0, promptQuota) + "...";
+            if (totalLen > availableChars) {
+                isTruncated = true; // 标记发生了截断
+                
+                // 压缩 UC
+                const limitUc = 100; // 预览版里 UC 给少一点
+                if (previewUc.length > limitUc) {
+                    previewUc = previewUc.substring(0, limitUc) + "...";
                 }
-                // 重新计算剩余给 UC
-                const remainingForUc = availableChars - prompt.length;
-                if (uc.length > remainingForUc) {
-                    uc = uc.substring(0, remainingForUc) + "...";
+                
+                // 剩余给 Prompt
+                const remaining = availableChars - previewUc.length;
+                if (previewPrompt.length > remaining) {
+                    previewPrompt = previewPrompt.substring(0, remaining) + "...";
                 }
             }
 
-            // 4. 拼接最终字符串
-            let res = headerStr;
-            res += "✨ *Prompt*\n```\n" + prompt + "\n```\n\n";
-            if (uc) {
-                res += "❌ *Negative*\n```\n" + uc + "\n```\n\n";
+            let caption = headerStr;
+            caption += "✨ *Prompt*\n```\n" + previewPrompt + "\n```\n\n";
+            if (previewUc) {
+                caption += "❌ *Negative*\n```\n" + previewUc + "\n```\n\n";
             }
-            res += footerStr;
+            caption += footerStr;
 
-            return res;
-            // --- 修复结束 ---
+            // 返回对象：包含 caption, 完整文本, 以及是否需要分段发送的标记
+            return {
+                caption: caption,
+                fullText: fullText,
+                needsSecondMessage: isTruncated // 如果预览版被截断了，就发送完整版
+            };
         }
     } catch (e) { return null; }
     return null;

@@ -50,6 +50,34 @@ async sendFile(file, chatId, functionName, functionType, caption = '', fileName 
 
         return responseData;
     }
+    /**
+     * 发送文本消息 (支持回复某条消息)
+     * @param {string} chatId - 聊天ID
+     * @param {string} text - 消息内容
+     * @param {number|null} replyToMessageId - 要回复的消息ID (可选)
+     */
+    async sendMessage(chatId, text, replyToMessageId = null) {
+        const formData = new FormData();
+        formData.append('chat_id', chatId);
+        formData.append('text', text);
+        // 依然使用 MarkdownV2 以支持代码块复制
+        formData.append('parse_mode', 'MarkdownV2'); 
+        
+        if (replyToMessageId) {
+            formData.append('reply_to_message_id', replyToMessageId);
+        }
+
+        const response = await fetch(`${this.baseURL}/sendMessage`, {
+            method: 'POST',
+            headers: this.defaultHeaders,
+            body: formData
+        });
+
+        if (!response.ok) {
+            console.error(`Telegram sendMessage error: ${response.statusText}`);
+        }
+        return await response.json();
+    }
 
     /**
      * 获取文件信息
