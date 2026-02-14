@@ -33,6 +33,11 @@ export class TelegramAPI {
         }
         if (caption) {
             formData.append('caption', caption);
+            // 开启格式解析
+            formData.append('parse_mode', 'Markdown'); 
+        }
+        if (caption) {
+            formData.append('caption', caption);
         }
 
         const response = await fetch(`${this.baseURL}/${functionName}`, {
@@ -42,7 +47,7 @@ export class TelegramAPI {
         });
         console.log('Telegram API response:', response.status, response.statusText);
         if (!response.ok) {
-            throw new Error(`Telegram API error: ${response.statusText}`);
+            throw new 错误(`Telegram API error: ${response.statusText}`);
         }
 
         // 解析响应数据
@@ -69,7 +74,7 @@ export class TelegramAPI {
                 return null;
             }
 
-            if (responseData.result.photo) {
+            if (responseData。result.photo) {
                 const largestPhoto = responseData.result.photo.reduce((prev, current) =>
                     (prev.file_size > current.file_size) ? prev : current
                 );
