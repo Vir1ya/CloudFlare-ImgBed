@@ -469,11 +469,12 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
 
     const telegramAPI = new TelegramAPI(tgBotToken, tgProxyUrl);
 
-// 🌸 园丁的读心术：检测咒语
+// 检测全量元数据
     let caption = '';
     const detectedPrompt = await extractAIPrompt(file);
     if (detectedPrompt) {
-        caption = `✨ Elin's Garden 咒语卡：\n\n\`${detectedPrompt}\``;
+        // 直接使用解析函数拼好的格式
+        caption = detectedPrompt; 
     }
 
     // 16MB 分片阈值 (TG Bot getFile download limit: 20MB, leave 4MB safety margin)
@@ -524,7 +525,7 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
     // 上传文件到 Telegram
     let res = createResponse('upload error, check your environment params about telegram channel!', { status: 400 });
     try {
-        const response = await telegramAPI.sendFile(formdata.get('file'), tgChatId, sendFunction.url, sendFunction.type, caption);
+        caption：const response = await telegramAPI。sendFile(formdata.get('file'), tgChatId, sendFunction.url, sendFunction.type, caption);
         const fileInfo = telegramAPI.getFileInfo(response);
         const filePath = await telegramAPI.getFilePath(fileInfo.file_id);
         const id = fileInfo.file_id;
@@ -893,36 +894,60 @@ async function tryRetry(err, context, uploadChannel, fullId, metadata, fileExt, 
 
     return createResponse(JSON.stringify(errMessages), { status: 500 });
 }
-// 更加健壮的 AI 咒语解析逻辑
+//读取图片元数据，并提取提示词。
 async function extractAIPrompt(file) {
     if (file.type !== 'image/png') return null;
     try {
-        // 只切前 256KB，避免内存崩溃
         const header = await file.slice(0, 262144).arrayBuffer();
         const uint8 = new Uint8Array(header);
         const view = new DataView(header);
         const decoder = new TextDecoder();
         
-        let offset = 8; // 跳过 PNG 文件头
+        let offset = 8;
+        let info = { prompt: '', uc: '', model: '', steps: '', seed: '' };
+        let found = false;
+
         while (offset < uint8.length - 8) {
-            const length = view.getUint32(offset); // 使用 DataView 处理大端序
+            const length = view.getUint32(offset);
             const type = decoder.decode(uint8.slice(offset + 4, offset + 8));
-            
             if (type === 'tEXt' || type === 'iTXt') {
                 const data = uint8.slice(offset + 8, offset + 8 + length);
                 const textData = decoder.decode(data);
-                
-                // 只要包含这些关键字，就判定为我们要找的元数据
-                if (textData.includes('masterpiece') || textData.includes('rating:')) {
-                    const parts = textData.split('\0');
-                    // 拿取最后一部分内容，并截断至 TG 允许的 1000 字符内
-                    return parts[parts.length - 1].trim().substring(0, 1000);
+                const parts = textData.split('\0');
+                const key = parts[0];
+                const value = parts[1] || '';
+
+                if (key === 'Description') {
+                    info.prompt = value;
+                    found = true;
+                } else if (key === 'Comment') {
+                    try {
+                        const json = JSON.parse(value);
+                        info.uc = json.uc || '';
+                        info.model = json.model || '';
+                        info.steps = json.steps || '';
+                        info.seed = json.seed || '';
+                        if (json.prompt) info.prompt = json.prompt;
+                        found = true;
+                    } catch (e) {
+                        if (value.includes('masterpiece')) info.prompt = value;
+                    }
                 }
             }
-            offset += 12 + length; // 移动到下个 Chunk
+            offset += 12 + length;
         }
-    } catch (e) {
-        console.log('解析出错:', e.message);
-    }
+
+        if (found) {
+            // 🌸 重点：使用反引号包围提示词，实现一键复制且不干扰
+            let res = `🌸 **Elin's Garden 咒语卡** 🌸\n\n`;
+            res += `✨ **Prompt**\n\`${info.prompt}\`\n\n`;
+            if (info.uc) res += `❌ **Negative**\n\`${info.uc}\`\n\n`;
+            if (info.model) res += `🎨 **Model**: ${info.model}\n`;
+            if (info.steps || info.seed) {
+                res += `🔢 **Steps**: ${info.steps}  🎲 **Seed**: ${info.seed}`;
+            }
+            return res.substring(0, 1024); 
+        }
+    } catch (e) { return null; }
     return null;
 }
