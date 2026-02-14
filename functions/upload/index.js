@@ -154,8 +154,8 @@ async function processFileUpload(context, formdata = null) {
     // 处理文件夹路径格式，确保没有开头的/
     const normalizedFolder = uploadFolder
         ? uploadFolder.replace(/^\/+/, '') // 移除开头的/
-            .替换(/\/{2,}/g, '/') // 替换多个连续的/为单个/
-            .替换(/\/$/, '') // 移除末尾的/
+            .replace(/\/{2,}/g, '/') // 替换多个连续的/为单个/
+            .replace(/\/$/, '') // 移除末尾的/
         : '';
 
     const metadata = {
@@ -401,7 +401,7 @@ async function uploadFileToS3(context, fullId, metadata, returnLink) {
         // 保存 CDN 文件完整路径（如果配置了 CDN 域名）
         if (cdnDomain) {
             // 存储完整的 CDN 文件路径，而不是仅存储域名
-            metadata.S3CdnFileUrl = `${cdnDomain.替换(/\/$/, '')}/${s3FileName}`;
+            metadata.S3CdnFileUrl = `${cdnDomain.replace(/\/$/, '')}/${s3FileName}`;
         }
 
         // 图像审查
@@ -487,11 +487,11 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
 
     // 由于TG会把gif后缀的文件转为视频，所以需要修改后缀名绕过限制
     if (fileExt === 'gif') {
-        const newFileName = fileName.替换(/\.gif$/, '.jpeg');
+        const newFileName = fileName.replace(/\.gif$/, '.jpeg');
         const newFile = new File([formdata.get('file')], newFileName, { type: fileType });
         formdata.set('file', newFile);
     } else if (fileExt === 'webp') {
-        const newFileName = fileName.替换(/\.webp$/, '.jpeg');
+        const newFileName = fileName.replace(/\.webp$/, '.jpeg');
         const newFile = new File([formdata.get('file')], newFileName, { type: fileType });
         formdata.set('file', newFile);
     }
