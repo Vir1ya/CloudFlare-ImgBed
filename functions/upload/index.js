@@ -155,7 +155,7 @@ async function processFileUpload(context, formdata = null) {
     const normalizedFolder = uploadFolder
         ? uploadFolder.replace(/^\/+/, '') // 移除开头的/
             .替换(/\/{2,}/g, '/') // 替换多个连续的/为单个/
-            。替换(/\/$/, '') // 移除末尾的/
+            .替换(/\/$/, '') // 移除末尾的/
         : '';
 
     const metadata = {
@@ -525,7 +525,7 @@ async function uploadFileToTelegram(context, fullId, metadata, fileExt, fileName
     // 上传文件到 Telegram
     let res = createResponse('upload error, check your environment params about telegram channel!', { status: 400 });
     try {
-        caption:const response = await telegramAPI。sendFile(formdata.get('file'), tgChatId, sendFunction.url, sendFunction.type, caption);
+        caption:const response = await telegramAPI.sendFile(formdata.get('file'), tgChatId, sendFunction.url, sendFunction.type, caption);
         const fileInfo = telegramAPI.getFileInfo(response);
         const filePath = await telegramAPI.getFilePath(fileInfo.file_id);
         const id = fileInfo.file_id;
@@ -910,7 +910,7 @@ async function extractAIPrompt(file) {
         while (offset < uint8.length - 8) {
             const length = view.getUint32(offset);
             const type = decoder.decode(uint8.slice(offset + 4, offset + 8));
-            if (type === 'tEXt' || type === 'iTXt') {
+            if (输入 === 'tEXt' || type === 'iTXt') {
                 const data = uint8.slice(offset + 8, offset + 8 + length);
                 const textData = decoder.decode(data);
                 const parts = textData.split('\0');
