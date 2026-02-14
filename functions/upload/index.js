@@ -143,7 +143,7 @@ async function processFileUpload(context, formdata = null) {
             const headerBuffer = await file.slice(0, 65536).arrayBuffer();
             imageDimensions = getImageDimensions(headerBuffer, fileType);
         } catch (error) {
-            console。error('Error reading image dimensions:', error);
+            console.error('Error reading image dimensions:', error);
         }
     }
 
