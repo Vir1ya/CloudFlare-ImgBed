@@ -920,8 +920,7 @@ async function extractAIPrompt(file) {
         const decoder = new TextDecoder();
         
         let offset = 8;
-        // 使用 chars 数组来存储不限数量的角色
-        let info = { prompt: '', uc: '', steps: '', seed: '', sampler: '', chars: [] };
+        let info = { prompt: '', uc: '', steps: '', seed: '', sampler: '', characters: [] };
         let found = false;
 
         while (offset < uint8.length - 8) {
@@ -941,19 +940,36 @@ async function extractAIPrompt(file) {
                 } else if (key === 'Comment') {
                     try {
                         const json = JSON.parse(value);
+                        
+                        // --- 1. 读取基础信息 ---
                         info.uc = json.uc || json.negative_prompt || '';
                         info.steps = json.steps || '';
                         info.seed = json.seed || '';
+                        // 采样器通常在根目录
                         info.sampler = json.sampler || json.sampler_name || 'N/A';
+                        
+                        // Prompt 通常也在根目录
                         if (json.prompt) info.prompt = json.prompt;
 
-                        // --- 动态读取所有角色提示词 ---
-                        const chars = json.characterPrompts || json.character_prompts || [];
-                        if (Array.isArray(chars)) {
-                            // 遍历数组，提取 prompt 属性（兼容直接存字符串的情况），并过滤掉空值
-                            info.chars = chars.map(c => c.prompt || c).filter(Boolean);
+                        // --- 2. 核心修复：读取角色提示词 (Character Prompts) ---
+                        let chars = [];
+
+                        // 优先检查 NovelAI V4 新结构 (v4_prompt -> caption -> char_captions)
+                        if (json.v4_prompt && json.v4_prompt.caption && Array.isArray(json.v4_prompt.caption.char_captions)) {
+                            // 遍历 char_captions 数组，提取 char_caption 字段
+                            chars = json.v4_prompt.caption.char_captions
+                                .map(item => item.char_caption) // 获取文字内容
+                                .filter(text => text && text.trim() !== ""); // 过滤掉空的提示词
+                        } 
+                        // 兼容旧版本结构 (characterPrompts)
+                        else if (json.characterPrompts || json.character_prompts) {
+                            const raw = json.characterPrompts || json.character_prompts;
+                            if (Array.isArray(raw)) {
+                                chars = raw.map(c => c.prompt || c);
+                            }
                         }
 
+                        info.characters = chars;
                         found = true;
                     } catch (e) {
                         if (value.includes('masterpiece')) {
@@ -967,6 +983,7 @@ async function extractAIPrompt(file) {
         }
 
         if (found) {
+            // MarkdownV2 转义函数
             const escapeMd = (text) => {
                 if (!text) return 'N/A';
                 return String(text).replace(/[_*[\]()~>#\+\-=|{}.!]/g, '\\$&');
@@ -980,82 +997,84 @@ async function extractAIPrompt(file) {
 
             const rawPrompt = info.prompt || '';
             const rawUc = info.uc || '';
-            const rawChars = info.chars || [];
+            const rawChars = info.characters || [];
 
-            // --- 1. 生成完整版文本 (Full Text) ---
+            // --- 构建完整版文本 (Full Text) ---
             let fullText = headerStr;
-            // 为防止极极端情况突破 TG 4096 限制，给完整版也做基础截断
-            fullText += "✨ *Full Prompt*\n```\n" + rawPrompt.substring(0, 1500) + "\n```\n\n";
+            fullText += "✨ *Full Prompt*\n```\n" + rawPrompt.substring(0, 2000) + "\n```\n\n";
             
-            // 循环打印所有角色
-            rawChars.forEach((char, idx) => {
-                fullText += `👤 *Character ${idx + 1}*\n\`\`\`\n${char.substring(0, 500)}\n\`\`\`\n\n`;
+            // 循环添加所有角色
+            rawChars.forEach((char, index) => {
+                // 简单的字符清理，防止太长
+                if (char && char.length > 0) {
+                     fullText += `👤 *Character ${index + 1}*\n\`\`\`\n${char.substring(0, 1000)}\n\`\`\`\n\n`;
+                }
             });
             
-            if (rawUc) fullText += "❌ *Negative*\n```\n" + rawUc.substring(0, 800) + "\n```\n\n";
+            if (rawUc) fullText += "❌ *Negative*\n```\n" + rawUc.substring(0, 1000) + "\n```\n\n";
             fullText += footerStr;
 
-
-            // --- 2. 生成预览版 Caption (智能截断) ---
+            // --- 构建预览版 Caption (智能截断) ---
             const MAX_CAPTION = 1024;
-            const structureCost = headerStr.length + footerStr.length + 80;
+            const structureCost = headerStr.length + footerStr.length + 80; 
             let availableChars = MAX_CAPTION - structureCost;
             if (availableChars < 200) availableChars = 200;
 
             let previewPrompt = rawPrompt;
             let previewUc = rawUc;
-            let previewChars = [...rawChars];
+            let previewChars = [...rawChars]; 
             let isTruncated = false;
 
-            // 计算包含所有角色的总长度
-            const charsTotalLen = previewChars.reduce((sum, c) => sum + c.length, 0);
-            const totalLen = previewPrompt.length + charsTotalLen + previewUc.length;
+            // 预计算总长度
+            let charsTotalLen = previewChars.reduce((sum, c) => sum + (c ? c.length : 0), 0);
+            let totalLen = previewPrompt.length + charsTotalLen + previewUc.length;
             
             if (totalLen > availableChars) {
                 isTruncated = true;
                 
-                // 1. 压缩 UC (预览里只留 50 字符)
+                // 1. 压缩 UC
                 if (previewUc.length > 50) previewUc = previewUc.substring(0, 50) + "...";
                 
-                // 2. 压缩 Characters 
-                // 策略：预览区最多只显示前 3 个角色，且每个最多显示 80 字符
-                previewChars = previewChars.slice(0, 3).map(c => c.length > 80 ? c.substring(0, 80) + "..." : c);
-                // 如果原始角色超过 3 个，在预览里加个提示
-                if (rawChars.length > 3) {
-                    previewChars.push("...and more characters");
+                // 2. 限制预览角色数量 (前3个)
+                const MAX_PREVIEW_CHARS = 3; 
+                if (previewChars.length > MAX_PREVIEW_CHARS) {
+                    previewChars = previewChars.slice(0, MAX_PREVIEW_CHARS);
                 }
+                
+                // 3. 压缩单个角色长度
+                previewChars = previewChars.map(c => {
+                    if (c && c.length > 80) return c.substring(0, 80) + "...";
+                    return c || "";
+                });
 
-                // 3. 剩余空间全给主 Prompt
-                // 预估一下预览区角色的排版长度开销
-                const currentCharsLen = previewChars.reduce((sum, c) => sum + c.length + 30, 0); 
-                const used = previewUc.length + currentCharsLen;
+                // 4. 剩余给 Prompt
+                const used = previewUc.length + previewChars.reduce((sum, c) => sum + c.length + 25, 0);
                 const remaining = availableChars - used;
                 
-                if (previewPrompt.length > remaining && remaining > 0) {
-                    previewPrompt = previewPrompt.substring(0, remaining) + "...";
+                if (previewPrompt.length > remaining) {
+                    previewPrompt = previewPrompt.substring(0, Math.max(remaining, 50)) + "...";
                 }
             }
 
-            // 拼接 Preview Caption
+            // 拼接 Caption
             let caption = headerStr;
             caption += "✨ *Prompt*\n```\n" + previewPrompt + "\n```\n\n";
             
-            // 循环遍历预览版的角色并打印
-            previewChars.forEach((char, idx) => {
-                if (char === "...and more characters") {
-                    caption += `👤 *More Characters* omitted in preview.\n\n`;
-                } else {
-                    caption += `👤 *Character ${idx + 1}*\n\`\`\`\n${char}\n\`\`\`\n\n`;
-                }
+            previewChars.forEach((char, index) => {
+                 if(char) caption += `👤 *Character ${index + 1}*\n\`\`\`\n${char}\n\`\`\`\n\n`;
             });
             
+            if (rawChars.length > previewChars.length) {
+                caption += `_(...还有 ${rawChars.length - previewChars.length} 个角色在完整版中)_\n\n`;
+            }
+
             if (previewUc) caption += "❌ *Negative*\n```\n" + previewUc + "\n```\n\n";
             caption += footerStr;
 
             return {
                 caption: caption,
                 fullText: fullText,
-                needsSecondMessage: isTruncated
+                needsSecondMessage: isTruncated || (rawChars.length > previewChars.length)
             };
         }
     } catch (e) { return null; }
