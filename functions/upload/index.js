@@ -945,30 +945,25 @@ async function extractAIPrompt(file) {
                         info.uc = json.uc || json.negative_prompt || '';
                         info.steps = json.steps || '';
                         info.seed = json.seed || '';
-                        // 采样器通常在根目录
                         info.sampler = json.sampler || json.sampler_name || 'N/A';
                         
-                        // Prompt 通常也在根目录
                         if (json.prompt) info.prompt = json.prompt;
 
-                        // --- 2. 核心修复：读取角色提示词 (Character Prompts) ---
+                        // --- 2. 读取角色提示词 (兼容 V4 和旧版) ---
                         let chars = [];
-
-                        // 优先检查 NovelAI V4 新结构 (v4_prompt -> caption -> char_captions)
+                        // NovelAI V4 结构 (v4_prompt -> caption -> char_captions)
                         if (json.v4_prompt && json.v4_prompt.caption && Array.isArray(json.v4_prompt.caption.char_captions)) {
-                            // 遍历 char_captions 数组，提取 char_caption 字段
                             chars = json.v4_prompt.caption.char_captions
-                                .map(item => item.char_caption) // 获取文字内容
-                                .filter(text => text && text.trim() !== ""); // 过滤掉空的提示词
+                                .map(item => item.char_caption) 
+                                .filter(text => text && text.trim() !== "");
                         } 
-                        // 兼容旧版本结构 (characterPrompts)
+                        // 旧版本结构
                         else if (json.characterPrompts || json.character_prompts) {
                             const raw = json.characterPrompts || json.character_prompts;
                             if (Array.isArray(raw)) {
                                 chars = raw.map(c => c.prompt || c);
                             }
                         }
-
                         info.characters = chars;
                         found = true;
                     } catch (e) {
@@ -983,13 +978,12 @@ async function extractAIPrompt(file) {
         }
 
         if (found) {
-            // MarkdownV2 转义函数
             const escapeMd = (text) => {
                 if (!text) return 'N/A';
                 return String(text).replace(/[_*[\]()~>#\+\-=|{}.!]/g, '\\$&');
             };
 
-            const headerStr = "💕🌸 *Elin\\'s 咒语卡* 🌸💕\n\n"; 
+            const headerStr = "💕 *Elin\\的咒语卡* 🌸\n\n"; 
             const samplerStr = escapeMd(info.sampler || "N/A");
             const stepsStr = escapeMd(info.steps || "N/A");
             const seedStr = escapeMd(info.seed || "N/A");
@@ -999,22 +993,47 @@ async function extractAIPrompt(file) {
             const rawUc = info.uc || '';
             const rawChars = info.characters || [];
 
-            // --- 构建完整版文本 (Full Text) ---
+            // --- 1. 构建完整版文本 (Full Text) - 动态长度控制 ---
             let fullText = headerStr;
             fullText += "✨ *Full Prompt*\n```\n" + rawPrompt.substring(0, 2000) + "\n```\n\n";
             
-            // 循环添加所有角色
+            // Telegram 单条消息上限 4096，我们预留 100 字符安全空间
+            const TG_LIMIT = 4000;
+            
             rawChars.forEach((char, index) => {
-                // 简单的字符清理，防止太长
-                if (char && char.length > 0) {
-                     fullText += `👤 *Character ${index + 1}*\n\`\`\`\n${char.substring(0, 1000)}\n\`\`\`\n\n`;
+                if (!char) return;
+                
+                // 估算当前已用长度
+                let currentLen = fullText.length + footerStr.length;
+                
+                // 构造角色块的头尾
+                const charHeader = `👤 *Character ${index + 1}*\n\`\`\`\n`;
+                const charFooter = `\n\`\`\`\n\n`;
+                
+                // 计算剩余可用空间
+                const available = TG_LIMIT - currentLen - charHeader.length - charFooter.length;
+                
+                // 如果还有空间（至少 50 字符），就往里塞
+                if (available > 50) {
+                    // 取 "角色文本长度" 和 "剩余空间" 中较小的一个，但最大不超过 3000 (防止单角色极长挤占所有空间)
+                    const cutLen = Math.min(char.length, available, 3000);
+                    fullText += charHeader + char.substring(0, cutLen) + charFooter;
                 }
             });
             
-            if (rawUc) fullText += "❌ *Negative*\n```\n" + rawUc.substring(0, 1000) + "\n```\n\n";
+            // 计算剩余空间给 Negative Prompt
+            let currentLenBeforeUc = fullText.length + footerStr.length;
+            let availableForUc = TG_LIMIT - currentLenBeforeUc - 50; // 50 是 UC 标题的开销
+            
+            if (rawUc && availableForUc > 50) {
+                const ucLen = Math.min(rawUc.length, availableForUc);
+                fullText += "❌ *Negative*\n```\n" + rawUc.substring(0, ucLen) + "\n```\n\n";
+            }
+            
             fullText += footerStr;
 
-            // --- 构建预览版 Caption (智能截断) ---
+
+            // --- 2. 构建预览版 Caption (智能截断) ---
             const MAX_CAPTION = 1024;
             const structureCost = headerStr.length + footerStr.length + 80; 
             let availableChars = MAX_CAPTION - structureCost;
@@ -1041,7 +1060,7 @@ async function extractAIPrompt(file) {
                     previewChars = previewChars.slice(0, MAX_PREVIEW_CHARS);
                 }
                 
-                // 3. 压缩单个角色长度
+                // 3. 压缩单个角色长度 (预览版每个角色只留 80 字，看个大概就行)
                 previewChars = previewChars.map(c => {
                     if (c && c.length > 80) return c.substring(0, 80) + "...";
                     return c || "";
@@ -1074,7 +1093,8 @@ async function extractAIPrompt(file) {
             return {
                 caption: caption,
                 fullText: fullText,
-                needsSecondMessage: isTruncated || (rawChars.length > previewChars.length)
+                // 只要原始文本里有角色，或者发生过截断，就确保发完整版
+                needsSecondMessage: isTruncated || (rawChars.length > 0)
             };
         }
     } catch (e) { return null; }
