@@ -920,7 +920,8 @@ async function extractAIPrompt(file) {
         const decoder = new TextDecoder();
         
         let offset = 8;
-        let info = { prompt: '', uc: '', model: '', steps: '', seed: '' };
+        // 使用 chars 数组来存储不限数量的角色
+        let info = { prompt: '', uc: '', steps: '', seed: '', sampler: '', chars: [] };
         let found = false;
 
         while (offset < uint8.length - 8) {
@@ -941,10 +942,18 @@ async function extractAIPrompt(file) {
                     try {
                         const json = JSON.parse(value);
                         info.uc = json.uc || json.negative_prompt || '';
-                        info.model = json.model || json.model_hash || 'NovelAI';
                         info.steps = json.steps || '';
                         info.seed = json.seed || '';
+                        info.sampler = json.sampler || json.sampler_name || 'N/A';
                         if (json.prompt) info.prompt = json.prompt;
+
+                        // --- 动态读取所有角色提示词 ---
+                        const chars = json.characterPrompts || json.character_prompts || [];
+                        if (Array.isArray(chars)) {
+                            // 遍历数组，提取 prompt 属性（兼容直接存字符串的情况），并过滤掉空值
+                            info.chars = chars.map(c => c.prompt || c).filter(Boolean);
+                        }
+
                         found = true;
                     } catch (e) {
                         if (value.includes('masterpiece')) {
@@ -958,73 +967,95 @@ async function extractAIPrompt(file) {
         }
 
         if (found) {
-            // 转义函数
             const escapeMd = (text) => {
                 if (!text) return 'N/A';
-                return text.toString().replace(/[_*[\]()~>#\+\-=|{}.!]/g, '\\$&');
+                return String(text).replace(/[_*[\]()~>#\+\-=|{}.!]/g, '\\$&');
             };
 
             const headerStr = "💕🌸 *Elin\\'s 咒语卡* 🌸💕\n\n"; 
-            const modelStr = escapeMd(info.model || "Unknown");
+            const samplerStr = escapeMd(info.sampler || "N/A");
             const stepsStr = escapeMd(info.steps || "N/A");
             const seedStr = escapeMd(info.seed || "N/A");
-            const footerStr = `🎨 *Model*: ${modelStr}\n🔢 *Steps*: ${stepsStr}  🎲 *Seed*: ${seedStr}`;
+            const footerStr = `🧪 *Sampler*: ${samplerStr}\n🔢 *Steps*: ${stepsStr}  🎲 *Seed*: ${seedStr}`;
 
             const rawPrompt = info.prompt || '';
             const rawUc = info.uc || '';
+            const rawChars = info.chars || [];
 
-            // --- 1. 生成完整版文本 (用于第二条消息) ---
-            // 文本消息限制 4096，稍微留点余量
-            // 如果连纯文本都超了，那只能截断了，但这种情况极少
+            // --- 1. 生成完整版文本 (Full Text) ---
             let fullText = headerStr;
-            fullText += "✨ *Full Prompt*\n```\n" + rawPrompt.substring(0, 2500) + "\n```\n\n";
-            if (rawUc) {
-                fullText += "❌ *Negative*\n```\n" + rawUc.substring(0, 1000) + "\n```\n\n";
-            }
+            // 为防止极极端情况突破 TG 4096 限制，给完整版也做基础截断
+            fullText += "✨ *Full Prompt*\n```\n" + rawPrompt.substring(0, 1500) + "\n```\n\n";
+            
+            // 循环打印所有角色
+            rawChars.forEach((char, idx) => {
+                fullText += `👤 *Character ${idx + 1}*\n\`\`\`\n${char.substring(0, 500)}\n\`\`\`\n\n`;
+            });
+            
+            if (rawUc) fullText += "❌ *Negative*\n```\n" + rawUc.substring(0, 800) + "\n```\n\n";
             fullText += footerStr;
 
 
-            // --- 2. 生成预览版 Caption (用于图片下方) ---
-            // 逻辑：尽量展示，超长截断，死保正面提示词
+            // --- 2. 生成预览版 Caption (智能截断) ---
             const MAX_CAPTION = 1024;
-            const structureCost = headerStr.length + footerStr.length + 50;
+            const structureCost = headerStr.length + footerStr.length + 80;
             let availableChars = MAX_CAPTION - structureCost;
-            if (availableChars < 100) availableChars = 100;
+            if (availableChars < 200) availableChars = 200;
 
             let previewPrompt = rawPrompt;
             let previewUc = rawUc;
+            let previewChars = [...rawChars];
             let isTruncated = false;
 
-            const totalLen = previewPrompt.length + previewUc.length;
+            // 计算包含所有角色的总长度
+            const charsTotalLen = previewChars.reduce((sum, c) => sum + c.length, 0);
+            const totalLen = previewPrompt.length + charsTotalLen + previewUc.length;
             
             if (totalLen > availableChars) {
-                isTruncated = true; // 标记发生了截断
+                isTruncated = true;
                 
-                // 压缩 UC
-                const limitUc = 100; // 预览版里 UC 给少一点
-                if (previewUc.length > limitUc) {
-                    previewUc = previewUc.substring(0, limitUc) + "...";
+                // 1. 压缩 UC (预览里只留 50 字符)
+                if (previewUc.length > 50) previewUc = previewUc.substring(0, 50) + "...";
+                
+                // 2. 压缩 Characters 
+                // 策略：预览区最多只显示前 3 个角色，且每个最多显示 80 字符
+                previewChars = previewChars.slice(0, 3).map(c => c.length > 80 ? c.substring(0, 80) + "..." : c);
+                // 如果原始角色超过 3 个，在预览里加个提示
+                if (rawChars.length > 3) {
+                    previewChars.push("...and more characters");
                 }
+
+                // 3. 剩余空间全给主 Prompt
+                // 预估一下预览区角色的排版长度开销
+                const currentCharsLen = previewChars.reduce((sum, c) => sum + c.length + 30, 0); 
+                const used = previewUc.length + currentCharsLen;
+                const remaining = availableChars - used;
                 
-                // 剩余给 Prompt
-                const remaining = availableChars - previewUc.length;
-                if (previewPrompt.length > remaining) {
+                if (previewPrompt.length > remaining && remaining > 0) {
                     previewPrompt = previewPrompt.substring(0, remaining) + "...";
                 }
             }
 
+            // 拼接 Preview Caption
             let caption = headerStr;
             caption += "✨ *Prompt*\n```\n" + previewPrompt + "\n```\n\n";
-            if (previewUc) {
-                caption += "❌ *Negative*\n```\n" + previewUc + "\n```\n\n";
-            }
+            
+            // 循环遍历预览版的角色并打印
+            previewChars.forEach((char, idx) => {
+                if (char === "...and more characters") {
+                    caption += `👤 *More Characters* omitted in preview.\n\n`;
+                } else {
+                    caption += `👤 *Character ${idx + 1}*\n\`\`\`\n${char}\n\`\`\`\n\n`;
+                }
+            });
+            
+            if (previewUc) caption += "❌ *Negative*\n```\n" + previewUc + "\n```\n\n";
             caption += footerStr;
 
-            // 返回对象：包含 caption, 完整文本, 以及是否需要分段发送的标记
             return {
                 caption: caption,
                 fullText: fullText,
-                needsSecondMessage: isTruncated // 如果预览版被截断了，就发送完整版
+                needsSecondMessage: isTruncated
             };
         }
     } catch (e) { return null; }
